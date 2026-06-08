@@ -1,0 +1,1079 @@
+{
+  "name": "Villa Compliance v11 (4 modules, routed + evidence)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "trg",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "villa-v11",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.message.document.mime_type }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ifpdf",
+      "name": "Is PDF?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.document.file_id }}",
+        "additionalFields": {}
+      },
+      "id": "getf",
+      "name": "Get File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        400
+      ],
+      "webhookId": "villa-getfile",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot8045521147:AAEz470zJxK-eH3T-hn-SC1g6Z0EAcEfo6A/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "dl",
+      "name": "Download PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst bn = Object.keys(item.binary)[0];\nconst buff = await this.helpers.getBinaryDataBuffer(0, bn);\nconst pdf_base64 = buff.toString('base64');\nconst chat_id = $('Telegram Trigger').item.json.message.chat.id;\nconst filename = $('Telegram Trigger').item.json.message.document.file_name || 'plan.pdf';\nreturn [{ json: { pdf_base64, chat_id, filename } }];"
+      },
+      "id": "prep",
+      "name": "PDF to Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "📥 تم استلام المخطط، جاري التحليل... قد يستغرق دقيقة.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "ack",
+      "name": "Send Ack",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        560
+      ],
+      "webhookId": "ack",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR-CONTAINER-APP.azurecontainerapps.io/render_thumbs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"pdf_base64\": {{ JSON.stringify($json.pdf_base64) }},\n  \"thumb_dpi\": 90,\n  \"max_pages\": 60\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "thumb",
+      "name": "Render Thumbnails",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const thumbs = $json.thumbs || [];\nconst chat_id = $('PDF to Base64').item.json.chat_id;\nconst pdf_base64 = $('PDF to Base64').item.json.pdf_base64;\nconst filename = $('PDF to Base64').item.json.filename;\nconst instruction = `You are classifying pages of an Abu Dhabi villa drawing set. For EACH page image in order, return one label from: site_plan, ground_floor, first_floor, roof_plan, top_roof, section, elevation, area_schedule, stair_detail, service_block, boundary_wall, code_analysis, cover, perspective, other. Also list any anchor tokens you can read from: ROAD, PLOT LIMIT, SECTION A-A, SECTION B-B, AREA CALCULATION, FLOOR AREA, STAIR, RISER, TREAD, ELEVATION, FFL, MAJLIS. Output JSON ONLY: {\\\"pages\\\":[{\\\"index\\\":1,\\\"label\\\":\\\"\\\",\\\"confidence\\\":0.0,\\\"anchors\\\":[]}]}`;\nconst parts = [{ text: instruction }];\nfor (const t of thumbs) { parts.push({ text: `PAGE ${t.index}:` }); parts.push({ inline_data: { mime_type: 'image/png', data: t.thumb_png_b64 } }); }\nconst body = { contents: [{ role: 'user', parts }], generationConfig: { temperature: 0, maxOutputTokens: 8192 } };\nreturn [{ json: { body, chat_id, pdf_base64, filename } }];"
+      },
+      "id": "clsprompt",
+      "name": "Build Classifier Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://us-central1-aiplatform.googleapis.com/v1/projects/project-e5fae0e0-3545-4bca-b21/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "cls",
+      "name": "Gemini Classifier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        400
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pIuZQ87KhfKPSjO6",
+          "name": "Vertex AI Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst meta = $('Build Classifier Request').item.json;\nlet pageMap = [];\ntry { let t = r?.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('') || '';\n  t = t.replace(/```json\\s*/gi,'').replace(/```/g,'').trim().replace(/,\\s*([}\\]])/g,'$1');\n  const m = t.match(/\\{[\\s\\S]*\\}/); if (m) pageMap = (JSON.parse(m[0]).pages) || []; } catch(e) { pageMap = []; }\nconst routes = { site:['site_plan','boundary_wall','service_block'], floorplan:['ground_floor','first_floor','roof_plan','top_roof'], vertical:['section','elevation','stair_detail'], schedule:['area_schedule','code_analysis','stair_detail'] };\nconst pick = labels => pageMap.filter(p => labels.includes(p.label)).map(p => p.index);\nconst routing = { site:pick(routes.site), floorplan:pick(routes.floorplan), vertical:pick(routes.vertical), schedule:pick(routes.schedule) };\nconst allIdx = pageMap.map(p=>p.index);\nfor (const k in routing) { if (!routing[k].length) routing[k] = allIdx; }\nreturn [{ json: { pageMap, routing, chat_id: meta.chat_id, pdf_base64: meta.pdf_base64, filename: meta.filename } }];"
+      },
+      "id": "route",
+      "name": "Parse + Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR-CONTAINER-APP.azurecontainerapps.io/render_pages?indices={{ $json.routing.site.join(',') }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"pdf_base64\": {{ JSON.stringify($json.pdf_base64) }},\n  \"dpi\": 250\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "siternd",
+      "name": "Render Site Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $json.pages || [];\nconst route = $('Parse + Route').item.json;\nconst instruction = `You are an expert reader of Abu Dhabi villa SITE PLANS and BOUNDARY WALL drawings. All dimensions are in MILLIMETRES. The plot boundary is a dashed/solid PLOT LIMIT line; the road side is marked ROAD or MAIN ROAD. Setbacks are the gaps between PLOT LIMIT and the building wall. For EVERY field return an OBJECT: { \\\"value\\\": number|null, \\\"unit_original\\\": \\\"mm\\\"|\\\"m\\\"|\\\"cm\\\"|\\\"sqm\\\"|\\\"%\\\", \\\"page\\\": number, \\\"evidence_text\\\": \\\"exact text you read\\\", \\\"method\\\": \\\"table\\\"|\\\"section_mark\\\"|\\\"dimension_line\\\"|\\\"label\\\"|\\\"schedule\\\", \\\"confidence\\\": 0.0 }. Use null value and confidence 0 for anything you cannot actually read. Never guess. Output JSON ONLY: { \\\"site\\\": { \\\"plot_area_sqm\\\": {}, \\\"plot_width_m\\\": {}, \\\"plot_depth_m\\\": {} }, \\\"setbacks\\\": { \\\"front_setback_m\\\": {}, \\\"rear_setback_m\\\": {}, \\\"left_setback_m\\\": {}, \\\"right_setback_m\\\": {} }, \\\"separations\\\": { \\\"villa_to_annex_m\\\": {} }, \\\"fence\\\": { \\\"height_m\\\": {} }, \\\"entrances\\\": { \\\"vehicle_count\\\": {}, \\\"vehicle_width_m\\\": {}, \\\"pedestrian_count\\\": {}, \\\"ped_width_m\\\": {} }, \\\"pool\\\": { \\\"present\\\": {}, \\\"barrier_m\\\": {} }, \\\"areas\\\": { \\\"coverage_pct\\\": {}, \\\"open_area_pct\\\": {} } }`;\nconst parts = [{ text: instruction }];\nfor (const p of pages) { parts.push({ text: `PAGE ${p.index} (high-res):` }); parts.push({ inline_data: { mime_type: 'image/png', data: p.full_png_b64 } }); }\nconst body = { contents: [{ role: 'user', parts }], generationConfig: { temperature: 0, maxOutputTokens: 16384 } };\nreturn [{ json: { body, chat_id: route.chat_id, pdf_base64: route.pdf_base64, filename: route.filename, routing: route.routing, pageMap: route.pageMap } }];"
+      },
+      "id": "sitebld",
+      "name": "Build Site Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://us-central1-aiplatform.googleapis.com/v1/projects/project-e5fae0e0-3545-4bca-b21/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "sitegem",
+      "name": "Gemini Site",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        100
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pIuZQ87KhfKPSjO6",
+          "name": "Vertex AI Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst meta = $('Build Site Request').item.json;\nlet d = {};\ntry { let t = r?.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('') || '';\n  t = t.replace(/```json\\s*/gi,'').replace(/```/g,'').trim().replace(/,\\s*([}\\]])/g,'$1');\n  const m = t.match(/\\{[\\s\\S]*\\}/); if (m) d = JSON.parse(m[0]); } catch(e) { d = { parse_error: e.message }; }\nreturn [{ json: { module: 'site', extracted: d, chat_id: meta.chat_id, filename: meta.filename, pageMap: meta.pageMap } }];"
+      },
+      "id": "siteprs",
+      "name": "Parse Site",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR-CONTAINER-APP.azurecontainerapps.io/render_pages?indices={{ $json.routing.floorplan.join(',') }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"pdf_base64\": {{ JSON.stringify($json.pdf_base64) }},\n  \"dpi\": 250\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "floorrnd",
+      "name": "Render Floor Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $json.pages || [];\nconst route = $('Parse + Route').item.json;\nconst instruction = `You are an expert reader of Abu Dhabi villa FLOOR PLANS (ground, first, roof). All dimensions are in MILLIMETRES (e.g. 560 = 5.6m). Room area may appear in a FLOOR AREA box, or as L x W on the label, or must be computed from dimension lines. width_m is the SMALLER room dimension. For EVERY field return an OBJECT: { \\\"value\\\": number|null, \\\"unit_original\\\": \\\"mm\\\"|\\\"m\\\"|\\\"cm\\\"|\\\"sqm\\\"|\\\"%\\\", \\\"page\\\": number, \\\"evidence_text\\\": \\\"exact text you read\\\", \\\"method\\\": \\\"table\\\"|\\\"section_mark\\\"|\\\"dimension_line\\\"|\\\"label\\\"|\\\"schedule\\\", \\\"confidence\\\": 0.0 }. Use null value and confidence 0 for anything you cannot actually read. Never guess. Output JSON ONLY: { \\\"rooms\\\": { \\\"ground_floor\\\": [ { \\\"name\\\": \\\"\\\", \\\"type\\\": \\\"\\\", \\\"area\\\": {}, \\\"width\\\": {} } ], \\\"first_floor\\\": [ { \\\"name\\\": \\\"\\\", \\\"type\\\": \\\"\\\", \\\"area\\\": {}, \\\"width\\\": {} } ], \\\"roof_floor\\\": [ { \\\"name\\\": \\\"\\\", \\\"type\\\": \\\"\\\", \\\"area\\\": {}, \\\"width\\\": {} } ] }, \\\"kitchen\\\": { \\\"main_count\\\": {}, \\\"area_sqm\\\": {}, \\\"pantry_count\\\": {} }, \\\"majlis\\\": { \\\"count\\\": {}, \\\"main_area_sqm\\\": {} }, \\\"corridors\\\": { \\\"min_width_m\\\": {} }, \\\"doors\\\": { \\\"main_entrance_clear_mm\\\": {}, \\\"smallest_clear_mm\\\": {} } }`;\nconst parts = [{ text: instruction }];\nfor (const p of pages) { parts.push({ text: `PAGE ${p.index} (high-res):` }); parts.push({ inline_data: { mime_type: 'image/png', data: p.full_png_b64 } }); }\nconst body = { contents: [{ role: 'user', parts }], generationConfig: { temperature: 0, maxOutputTokens: 16384 } };\nreturn [{ json: { body, chat_id: route.chat_id, pdf_base64: route.pdf_base64, filename: route.filename, routing: route.routing, pageMap: route.pageMap } }];"
+      },
+      "id": "floorbld",
+      "name": "Build Floor Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://us-central1-aiplatform.googleapis.com/v1/projects/project-e5fae0e0-3545-4bca-b21/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "floorgem",
+      "name": "Gemini Floor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        350
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pIuZQ87KhfKPSjO6",
+          "name": "Vertex AI Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst meta = $('Build Floor Request').item.json;\nlet d = {};\ntry { let t = r?.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('') || '';\n  t = t.replace(/```json\\s*/gi,'').replace(/```/g,'').trim().replace(/,\\s*([}\\]])/g,'$1');\n  const m = t.match(/\\{[\\s\\S]*\\}/); if (m) d = JSON.parse(m[0]); } catch(e) { d = { parse_error: e.message }; }\nreturn [{ json: { module: 'floor', extracted: d, chat_id: meta.chat_id, filename: meta.filename, pageMap: meta.pageMap } }];"
+      },
+      "id": "floorprs",
+      "name": "Parse Floor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR-CONTAINER-APP.azurecontainerapps.io/render_pages?indices={{ $json.routing.vertical.join(',') }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"pdf_base64\": {{ JSON.stringify($json.pdf_base64) }},\n  \"dpi\": 250\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "vertrnd",
+      "name": "Render Vert Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $json.pages || [];\nconst route = $('Parse + Route').item.json;\nconst instruction = `You are an expert reader of Abu Dhabi villa SECTIONS, ELEVATIONS and STAIR DETAILS. Plan dimensions are in MILLIMETRES; level marks like +0.30, +4.72, +14.70 are in METRES. FROM THE STAIR DETAIL TABLE read literally: TOTAL HEIGHT, STAIR WIDTH, N.OF STEPS, RISER, TREAD. Riser/Tread like 0.17 / 0.30 mean 17cm/30cm -> convert to mm in value (170/300), set unit_original to what you saw. FROM SECTIONS read level marks to compute floor-to-floor and total height. For EVERY field return an OBJECT: { \\\"value\\\": number|null, \\\"unit_original\\\": \\\"mm\\\"|\\\"m\\\"|\\\"cm\\\"|\\\"sqm\\\"|\\\"%\\\", \\\"page\\\": number, \\\"evidence_text\\\": \\\"exact text you read\\\", \\\"method\\\": \\\"table\\\"|\\\"section_mark\\\"|\\\"dimension_line\\\"|\\\"label\\\"|\\\"schedule\\\", \\\"confidence\\\": 0.0 }. Use null value and confidence 0 for anything you cannot actually read. Never guess. Output JSON ONLY: { \\\"heights\\\": { \\\"total_building_m\\\": {}, \\\"ground_floor_to_floor_m\\\": {}, \\\"first_floor_to_floor_m\\\": {}, \\\"parapet_m\\\": {}, \\\"under_stair_m\\\": {} }, \\\"levels\\\": { \\\"gf_above_road_m\\\": {}, \\\"entrance_above_road_m\\\": {} }, \\\"stairs\\\": { \\\"count\\\": {}, \\\"width_m\\\": {}, \\\"riser_mm\\\": {}, \\\"tread_mm\\\": {}, \\\"headroom_m\\\": {}, \\\"flight_rise_m\\\": {}, \\\"handrail_mm\\\": {} } }`;\nconst parts = [{ text: instruction }];\nfor (const p of pages) { parts.push({ text: `PAGE ${p.index} (high-res):` }); parts.push({ inline_data: { mime_type: 'image/png', data: p.full_png_b64 } }); }\nconst body = { contents: [{ role: 'user', parts }], generationConfig: { temperature: 0, maxOutputTokens: 16384 } };\nreturn [{ json: { body, chat_id: route.chat_id, pdf_base64: route.pdf_base64, filename: route.filename, routing: route.routing, pageMap: route.pageMap } }];"
+      },
+      "id": "vertbld",
+      "name": "Build Vert Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://us-central1-aiplatform.googleapis.com/v1/projects/project-e5fae0e0-3545-4bca-b21/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "vertgem",
+      "name": "Gemini Vert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        600
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pIuZQ87KhfKPSjO6",
+          "name": "Vertex AI Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst meta = $('Build Vert Request').item.json;\nlet d = {};\ntry { let t = r?.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('') || '';\n  t = t.replace(/```json\\s*/gi,'').replace(/```/g,'').trim().replace(/,\\s*([}\\]])/g,'$1');\n  const m = t.match(/\\{[\\s\\S]*\\}/); if (m) d = JSON.parse(m[0]); } catch(e) { d = { parse_error: e.message }; }\nreturn [{ json: { module: 'vert', extracted: d, chat_id: meta.chat_id, filename: meta.filename, pageMap: meta.pageMap } }];"
+      },
+      "id": "vertprs",
+      "name": "Parse Vert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR-CONTAINER-APP.azurecontainerapps.io/render_pages?indices={{ $json.routing.schedule.join(',') }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"pdf_base64\": {{ JSON.stringify($json.pdf_base64) }},\n  \"dpi\": 250\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "schedrnd",
+      "name": "Render Sched Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        850
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $json.pages || [];\nconst route = $('Parse + Route').item.json;\nconst instruction = `You are an expert reader of Abu Dhabi villa AREA SCHEDULES, CODE ANALYSIS sheets and DOOR/STAIR tables. Read printed table values exactly. For EVERY field return an OBJECT: { \\\"value\\\": number|null, \\\"unit_original\\\": \\\"mm\\\"|\\\"m\\\"|\\\"cm\\\"|\\\"sqm\\\"|\\\"%\\\", \\\"page\\\": number, \\\"evidence_text\\\": \\\"exact text you read\\\", \\\"method\\\": \\\"table\\\"|\\\"section_mark\\\"|\\\"dimension_line\\\"|\\\"label\\\"|\\\"schedule\\\", \\\"confidence\\\": 0.0 }. Use null value and confidence 0 for anything you cannot actually read. Never guess. Output JSON ONLY: { \\\"areas\\\": { \\\"ground_floor_sqm\\\": {}, \\\"first_floor_sqm\\\": {}, \\\"roof_floor_sqm\\\": {}, \\\"total_built_sqm\\\": {}, \\\"coverage_pct\\\": {} }, \\\"building_info\\\": { \\\"floors_above_ground\\\": {}, \\\"max_height_m\\\": {} }, \\\"fire\\\": { \\\"smoke_alarms_present\\\": {} } }`;\nconst parts = [{ text: instruction }];\nfor (const p of pages) { parts.push({ text: `PAGE ${p.index} (high-res):` }); parts.push({ inline_data: { mime_type: 'image/png', data: p.full_png_b64 } }); }\nconst body = { contents: [{ role: 'user', parts }], generationConfig: { temperature: 0, maxOutputTokens: 16384 } };\nreturn [{ json: { body, chat_id: route.chat_id, pdf_base64: route.pdf_base64, filename: route.filename, routing: route.routing, pageMap: route.pageMap } }];"
+      },
+      "id": "schedbld",
+      "name": "Build Sched Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        850
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://us-central1-aiplatform.googleapis.com/v1/projects/project-e5fae0e0-3545-4bca-b21/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "schedgem",
+      "name": "Gemini Sched",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        850
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pIuZQ87KhfKPSjO6",
+          "name": "Vertex AI Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst meta = $('Build Sched Request').item.json;\nlet d = {};\ntry { let t = r?.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('') || '';\n  t = t.replace(/```json\\s*/gi,'').replace(/```/g,'').trim().replace(/,\\s*([}\\]])/g,'$1');\n  const m = t.match(/\\{[\\s\\S]*\\}/); if (m) d = JSON.parse(m[0]); } catch(e) { d = { parse_error: e.message }; }\nreturn [{ json: { module: 'sched', extracted: d, chat_id: meta.chat_id, filename: meta.filename, pageMap: meta.pageMap } }];"
+      },
+      "id": "schedprs",
+      "name": "Parse Sched",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        850
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "id": "merge",
+      "name": "Merge 4 Modules",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2900,
+        475
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge node passes 4 items (one per module). Combine their extracted objects.\nconst items = $input.all();\nlet extracted = {}; let pageMap = []; let chat_id, filename;\nfor (const it of items) { const j = it.json; Object.assign(extracted, j.extracted||{}); if ((j.pageMap||[]).length) pageMap = j.pageMap; chat_id = chat_id||j.chat_id; filename = filename||j.filename; }\nconst labelOf = idx => (pageMap.find(p=>p.index===idx)||{}).label || 'unknown';\nconst review = [];\nfunction norm(f){ if(!f||typeof f!=='object'||f.value==null) return f; if(f.unit_original==='cm'){f._mm=f.value*10;f._m=f.value/100;} else if(f.unit_original==='mm'){f._mm=f.value;f._m=f.value/1000;} else if(f.unit_original==='m'){f._m=f.value;f._mm=f.value*1000;} else {f._raw=f.value;} return f; }\nfunction gate(name,f){ if(!f||f.value==null){return;} norm(f); if(f.page!=null) f.page_label=labelOf(f.page); if((f.confidence||0)<0.6){f.review=true; review.push({field:name,reason:'low_confidence',conf:f.confidence});} }\nfunction walk(obj,prefix){ for(const k of Object.keys(obj||{})){ const v=obj[k]; if(Array.isArray(v)){ v.forEach((el,i)=>walk(el,`${prefix}${k}[${i}].`)); } else if(v&&typeof v==='object'&&'value' in v){ gate(prefix+k,v); } else if(v&&typeof v==='object'){ walk(v,prefix+k+'.'); } } }\nwalk(extracted,'');\n// source-page rule: setbacks must come from site/boundary pages\nconst SITE_OK=new Set(['site_plan','boundary_wall']);\nfor(const k of ['front_setback_m','rear_setback_m','left_setback_m','right_setback_m']){ const f=extracted.setbacks?.[k]; if(f&&f.page_label&&!SITE_OK.has(f.page_label)){f.review=true; review.push({field:'setbacks.'+k,reason:'wrong_source_page',page:f.page_label});} }\n// stairs must come from section/elevation/stair_detail\nconst STAIR_OK=new Set(['section','elevation','stair_detail']);\nfor(const k of ['width_m','riser_mm','tread_mm','headroom_m','flight_rise_m','handrail_mm']){ const f=extracted.stairs?.[k]; if(f&&f.page_label&&!STAIR_OK.has(f.page_label)){f.review=true; review.push({field:'stairs.'+k,reason:'wrong_source_page',page:f.page_label});} }\n// room-area reconciliation vs schedule\nconst sched=extracted.areas||{};\nconst floors={ground_floor:sched.ground_floor_sqm?.value, first_floor:sched.first_floor_sqm?.value, roof_floor:sched.roof_floor_sqm?.value};\nfor(const fl in floors){ const total=floors[fl]; if(!total) continue; const rooms=extracted.rooms?.[fl]||[]; const sum=rooms.reduce((a,r)=>a+(r.area?.value&&r.area.unit_original==='sqm'?r.area.value:0),0); if(sum>0){ const dev=Math.abs(sum-total)/total; if(dev>0.15) review.push({field:fl+'_rooms',reason:'area_mismatch',sum:+sum.toFixed(1),expected:total}); } }\nreturn [{ json: { extracted, review, chat_id, filename } }];"
+      },
+      "id": "combine",
+      "name": "Combine + Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        475
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json.extracted || {};\nconst review = $input.first().json.review || [];\nconst chat_id = $input.first().json.chat_id;\n// Rules subset embedded; in production load rules.json instead.\nconst RULES=[\n{id:'S-FRONT',field:'setbacks.front_setback_m',kind:'m',op:'>=',value:1.5,label:'الارتداد الأمامي',part:'A'},\n{id:'S-REAR',field:'setbacks.rear_setback_m',kind:'m',op:'>=',value:1.5,label:'الارتداد الخلفي',part:'A'},\n{id:'S-LEFT',field:'setbacks.left_setback_m',kind:'m',op:'>=',value:1.5,label:'الارتداد الأيسر',part:'A'},\n{id:'S-RIGHT',field:'setbacks.right_setback_m',kind:'m',op:'>=',value:1.5,label:'الارتداد الأيمن',part:'A'},\n{id:'COV',field:'areas.coverage_pct',kind:'raw',op:'<=',value:70,label:'نسبة البناء',part:'A'},\n{id:'FENCE',field:'fence.height_m',kind:'m',op:'<=',value:4.0,label:'ارتفاع السور',part:'A'},\n{id:'HEIGHT',field:'heights.total_building_m',kind:'m',op:'<=',value:18,label:'ارتفاع المبنى',part:'A'},\n{id:'STAIR-W',field:'stairs.width_m',kind:'m',op:'>=',value:0.915,label:'عرض الدرج',part:'B'},\n{id:'RISER',field:'stairs.riser_mm',kind:'mm',op:'range',min:100,max:195,label:'ارتفاع قائمة الدرج',part:'B'},\n{id:'TREAD',field:'stairs.tread_mm',kind:'mm',op:'>=',value:280,label:'عمق نائمة الدرج',part:'B'},\n{id:'HEAD',field:'stairs.headroom_m',kind:'m',op:'>=',value:2.05,label:'الخلوص فوق الدرج',part:'B'},\n{id:'FLIGHT',field:'stairs.flight_rise_m',kind:'m',op:'<=',value:3.65,label:'ارتفاع قلبة الدرج',part:'B'},\n{id:'KIT',field:'kitchen.area_sqm',kind:'raw',op:'>=',value:12,label:'مساحة المطبخ',part:'C'},\n{id:'CORR',field:'corridors.min_width_m',kind:'m',op:'>=',value:0.915,label:'عرض الممر',part:'C'},\n{id:'DOOR',field:'doors.main_entrance_clear_mm',kind:'mm',op:'>=',value:815,label:'عرض الباب الرئيسي',part:'C'},\n{id:'POOL',field:'pool.barrier_m',kind:'m',op:'>=',value:1.2,label:'حاجز المسبح',part:'C',applies_if:()=>e.pool?.present?.value===true}\n];\nfunction getf(path){ return path.split('.').reduce((o,k)=>(o||{})[k], e); }\nfunction val(f,kind){ if(!f)return null; if(kind==='mm')return f._mm??null; if(kind==='m')return f._m??null; return f._raw??f.value??null; }\nconst checks=[];\nfor(const rule of RULES){ if(rule.applies_if && !rule.applies_if()){continue;} const f=getf(rule.field);\n  if(!f||f.value==null||f.review){ checks.push({id:rule.id,part:rule.part,label:rule.label,status:'review',actual:null,required:rule.op==='range'?`${rule.min}-${rule.max}`:`${rule.op} ${rule.value}`}); continue; }\n  const v=val(f,rule.kind); let pass;\n  if(rule.op==='>=')pass=v>=rule.value; else if(rule.op==='<=')pass=v<=rule.value; else if(rule.op==='range')pass=v>=rule.min&&v<=rule.max;\n  const unit=rule.kind==='mm'?'mm':(rule.kind==='m'?'m':'');\n  checks.push({id:rule.id,part:rule.part,label:rule.label,status:pass?'pass':'fail',actual:`${v}${unit}`,required:rule.op==='range'?`${rule.min}-${rule.max}mm`:`${rule.op} ${rule.value}`});\n}\nreturn [{ json: { checks, review, extracted: e, chat_id } }];"
+      },
+      "id": "comp",
+      "name": "Compliance (full)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3340,
+        475
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const f=$input.first().json; const checks=f.checks||[]; const review=f.review||[];\nconst h=t=>(t==null?'':String(t)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst ps=checks.filter(c=>c.status==='pass').length, fl=checks.filter(c=>c.status==='fail').length, rv=checks.filter(c=>c.status==='review').length;\nconst pct=(ps+fl)>0?((ps/(ps+fl))*100).toFixed(0):'—';\nconst risk = fl>3?'عالية':fl>0?'متوسطة':'منخفضة';\nlet m1=`📋 <b>تقرير الامتثال v11</b>\\n🏛 أبوظبي — DMT + ADIBC\\n━━━━━━\\n✅ نجح: ${ps} | ❌ فشل: ${fl} | 🔍 مراجعة: ${rv}\\n📊 نسبة الامتثال: <b>${pct}%</b>\\n🚨 المخاطر: <b>${risk}</b>`;\nfunction section(part,title){ let s=`${title}\\n━━━━━━\\n`; const rows=checks.filter(c=>c.part===part); if(!rows.length) return s+'لا يوجد\\n'; for(const c of rows){ const i=c.status==='pass'?'✅':c.status==='fail'?'❌':'🔍'; s+=`${i} ${h(c.label)}: ${h(c.actual)||'—'} (${h(c.required)})\\n`; } return s; }\nconst m2=section('A','📐 <b>الجزء أ: الموقع والارتفاعات</b>');\nconst m3=section('B','🪜 <b>الجزء ب: الدرج</b>');\nconst m4=section('C','🚪 <b>الجزء ج: الغرف والمداخل والمسبح</b>');\nlet m5='🔍 <b>بنود تحتاج مراجعة بصرية</b>\\n━━━━━━\\n';\nif(review.length){ for(const r of review){ m5+=`• ${h(r.field)} — ${h(r.reason)}${r.conf!=null?` (ثقة ${r.conf})`:''}${r.expected!=null?` (متوقع ${r.expected}، مجموع ${r.sum})`:''}\\n`; } } else { m5+='لا يوجد — جميع القيم مقروءة بثقة كافية.'; }\nm5+='\\n\\n💡 البنود 🔍 لم تُقرأ بثقة كافية من المخطط وتحتاج تدقيق يدوي.';\nreturn [{ json: { m1, m2, m3, m4, m5, chat_id: f.chat_id } }];"
+      },
+      "id": "report",
+      "name": "Final Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3560,
+        475
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.m1 }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send1",
+      "name": "Send 1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3780,
+        475
+      ],
+      "webhookId": "send1",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Final Report').item.json.chat_id }}",
+        "text": "={{ $('Final Report').item.json.m2 }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send2",
+      "name": "Send 2",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4000,
+        475
+      ],
+      "webhookId": "send2",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Final Report').item.json.chat_id }}",
+        "text": "={{ $('Final Report').item.json.m3 }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send3",
+      "name": "Send 3",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4220,
+        475
+      ],
+      "webhookId": "send3",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Final Report').item.json.chat_id }}",
+        "text": "={{ $('Final Report').item.json.m4 }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send4",
+      "name": "Send 4",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4440,
+        475
+      ],
+      "webhookId": "send4",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Final Report').item.json.chat_id }}",
+        "text": "={{ $('Final Report').item.json.m5 }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "send5",
+      "name": "Send 5",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4660,
+        475
+      ],
+      "webhookId": "send5",
+      "credentials": {
+        "telegramApi": {
+          "id": "cJdnjbdyj07WLN5v",
+          "name": "plans_pdf"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Render Site Pages": {
+      "main": [
+        [
+          {
+            "node": "Build Site Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Site Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini Site",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Site": {
+      "main": [
+        [
+          {
+            "node": "Parse Site",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Floor Pages": {
+      "main": [
+        [
+          {
+            "node": "Build Floor Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Floor Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini Floor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Floor": {
+      "main": [
+        [
+          {
+            "node": "Parse Floor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Vert Pages": {
+      "main": [
+        [
+          {
+            "node": "Build Vert Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Vert Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini Vert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Vert": {
+      "main": [
+        [
+          {
+            "node": "Parse Vert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Sched Pages": {
+      "main": [
+        [
+          {
+            "node": "Build Sched Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sched Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini Sched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Sched": {
+      "main": [
+        [
+          {
+            "node": "Parse Sched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Route": {
+      "main": [
+        [
+          {
+            "node": "Render Site Pages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Render Floor Pages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Render Vert Pages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Render Sched Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Site": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 Modules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Floor": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 Modules",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse Vert": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 Modules",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Parse Sched": {
+      "main": [
+        [
+          {
+            "node": "Merge 4 Modules",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge 4 Modules": {
+      "main": [
+        [
+          {
+            "node": "Combine + Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine + Validate": {
+      "main": [
+        [
+          {
+            "node": "Compliance (full)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compliance (full)": {
+      "main": [
+        [
+          {
+            "node": "Final Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Report": {
+      "main": [
+        [
+          {
+            "node": "Send 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 1": {
+      "main": [
+        [
+          {
+            "node": "Send 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 2": {
+      "main": [
+        [
+          {
+            "node": "Send 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 3": {
+      "main": [
+        [
+          {
+            "node": "Send 4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 4": {
+      "main": [
+        [
+          {
+            "node": "Send 5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Is PDF?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is PDF?": {
+      "main": [
+        [
+          {
+            "node": "Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File": {
+      "main": [
+        [
+          {
+            "node": "Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF": {
+      "main": [
+        [
+          {
+            "node": "PDF to Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF to Base64": {
+      "main": [
+        [
+          {
+            "node": "Render Thumbnails",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Thumbnails": {
+      "main": [
+        [
+          {
+            "node": "Build Classifier Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Classifier Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Classifier": {
+      "main": [
+        [
+          {
+            "node": "Parse + Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "villa-v11-four-modules"
+  }
+}
