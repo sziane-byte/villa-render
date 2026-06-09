@@ -1,13 +1,12 @@
 """
-Villa Compliance — PDF render/crop service (file-upload, low-memory design) v2
-
+Villa Compliance — PDF render/crop service (file-upload, low-memory design) v2.1
 Flow:
   POST /upload   (multipart file)         -> stores PDF, returns {job_id, page_count, thumbs[]}
   POST /pages    {job_id, indices, dpi}   -> high-res PNGs for those pages
+  POST /text     {job_id, indices}        -> embedded text layer for those pages
   POST /crop     {job_id, page, bbox,dpi} -> one high-res region
   GET  /health
   GET  /job/{job_id}                      -> {exists, page_count}
-
 n8n uploads the raw PDF ONCE (no base64 in n8n memory). The service keeps the file
 on local disk keyed by job_id, so later calls only send the job_id + page numbers.
 """
@@ -20,7 +19,7 @@ import os
 import time
 import uuid
 
-app = FastAPI(title="villa-render", version="2.0")
+app = FastAPI(title="villa-render", version="2.1")
 
 STORE_DIR = "/tmp/villa_jobs"
 JOB_TTL = 3600
@@ -31,6 +30,11 @@ class PagesIn(BaseModel):
     job_id: str
     indices: List[int] = []
     dpi: int = 250
+
+
+class TextIn(BaseModel):
+    job_id: str
+    indices: List[int] = []
 
 
 class CropIn(BaseModel):
@@ -110,6 +114,17 @@ def pages(inp: PagesIn):
     if not want:
         want = list(range(1, len(doc) + 1))
     out = [{"index": idx, "full_png_b64": _png(doc[idx - 1], inp.dpi)} for idx in want]
+    doc.close()
+    return {"pages": out}
+
+
+@app.post("/text")
+def text(inp: TextIn):
+    doc = _open_job(inp.job_id)
+    want = [i for i in inp.indices if 1 <= i <= len(doc)]
+    if not want:
+        want = list(range(1, len(doc) + 1))
+    out = [{"index": idx, "text": doc[idx - 1].get_text("text") or ""} for idx in want]
     doc.close()
     return {"pages": out}
 
